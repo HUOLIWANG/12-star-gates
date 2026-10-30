@@ -1,0 +1,364 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>十二星門 V2.0</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080d20;color:#fff;font-family:Arial,sans-serif;overflow:hidden;touch-action:none}
+#game{position:fixed;inset:0}
+#hud{position:fixed;top:12px;left:12px;right:12px;z-index:5;pointer-events:none}
+.panel{background:#101a32dd;border:1px solid #a88b54;border-radius:12px;padding:10px;margin-bottom:7px}
+#bars{display:flex;gap:8px;align-items:center}
+.bar{height:9px;background:#333;border-radius:8px;overflow:hidden;margin-top:4px}
+.fill{height:100%;width:100%;background:#e34b54}
+#mp{background:#3989ed}
+#xp{background:#d6ae42}
+#bottom{position:fixed;bottom:18px;left:12px;right:12px;z-index:6;display:flex;justify-content:space-between;align-items:end}
+#joy{width:118px;height:118px;border-radius:50%;background:#ffffff22;border:2px solid #ffffff66;position:relative;touch-action:none}
+#knob{position:absolute;width:48px;height:48px;border-radius:50%;background:#d8c18b;left:33px;top:33px}
+.actions{display:flex;gap:9px;align-items:end}
+.action{width:62px;height:62px;border-radius:50%;background:#243d67;border:2px solid #d4b66c;color:white;font-size:13px;font-weight:bold;touch-action:none}
+.action.big{width:76px;height:76px;background:#8b382d}
+#class{background:#172541;color:white;border:1px solid #c8a45e;padding:8px;border-radius:8px}
+#message{font-size:12px;color:#f5d88c}
+button:active{filter:brightness(1.5)}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="hud">
+ <div class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+   <b>🌌 十二星門 V2.0</b>
+   <select id="class">
+    <option value="warrior">⚔️ 戰士</option>
+    <option value="mage">🔥 法師</option>
+    <option value="archer">🏹 弓箭手</option>
+    <option value="summoner">🔮 召喚師</option>
+   </select>
+  </div>
+  <div id="stats">戰士 Lv.1　攻擊力 20　防禦 5</div>
+  <div id="bars"><span>HP</span><div class="bar" style="flex:1"><div id="hp" class="fill"></div></div><span id="hptext">100/100</span></div>
+  <div id="bars"><span>MP</span><div class="bar" style="flex:1"><div id="mp" class="fill"></div></div><span id="mptext">60/60</span></div>
+  <div class="bar"><div id="xp" class="fill" style="width:0%"></div></div>
+  <div id="message">探索星門，擊敗怪物，取得經驗值！</div>
+ </div>
+ <div class="panel" style="display:flex;justify-content:space-between">
+  <span id="enemycount">怪物：0</span>
+  <span id="weapon">武器：初心者之劍</span>
+  <button id="equip" style="pointer-events:auto">強化武器</button>
+ </div>
+</div>
+<div id="bottom">
+ <div id="joy"><div id="knob"></div></div>
+ <div class="actions">
+  <button class="action" id="dodge">閃避</button>
+  <button class="action" id="skill">技能</button>
+  <button class="action big" id="attack">攻擊</button>
+ </div>
+</div>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x101a36);
+scene.fog=new THREE.Fog(0x101a36,15,48);
+
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.1,100);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+document.getElementById('game').appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xc5d9ff,0x332244,2));
+const light=new THREE.DirectionalLight(0xffffff,2);
+light.position.set(5,12,6);
+light.castShadow=true;
+scene.add(light);
+
+const ground=new THREE.Mesh(
+ new THREE.PlaneGeometry(100,100),
+ new THREE.MeshStandardMaterial({color:0x263b43,roughness:1})
+);
+ground.rotation.x=-Math.PI/2;
+ground.receiveShadow=true;
+scene.add(ground);
+
+const grid=new THREE.GridHelper(100,50,0x668080,0x354b55);
+grid.position.y=.02;
+scene.add(grid);
+
+// 十二星門入口
+const portal=new THREE.Mesh(
+ new THREE.TorusGeometry(2.2,.17,12,64),
+ new THREE.MeshStandardMaterial({color:0x8c5cff,emissive:0x5422ff,emissiveIntensity:2})
+);
+portal.position.set(0,2,-13);
+scene.add(portal);
+
+const base={
+ warrior:{name:'戰士',color:0x3d8dbd,hp:140,mp:50,atk:25,def:9},
+ mage:{name:'法師',color:0x9b63e8,hp:85,mp:120,atk:38,def:3},
+ archer:{name:'弓箭手',color:0x45b77a,hp:100,mp:75,atk:30,def:5},
+ summoner:{name:'召喚師',color:0xd3a34b,hp:110,mp:100,atk:27,def:6}
+};
+
+let type='warrior',level=1,exp=0,weapon=0;
+let hp=140,mp=50,atk=25,def=9;
+let enemies=[],lastAttack=0,lastSkill=0;
+let move={x:0,z:0};
+let keys={};
+let player=new THREE.Group();
+scene.add(player);
+
+function makePlayer(){
+ while(player.children.length)player.remove(player.children[0]);
+ const c=base[type].color;
+ const body=new THREE.Mesh(
+  new THREE.CylinderGeometry(.38,.48,1.25,12),
+  new THREE.MeshStandardMaterial({color:c,roughness:.5})
+ );
+ body.position.y=.85;
+ body.castShadow=true;
+ player.add(body);
+ const head=new THREE.Mesh(
+  new THREE.SphereGeometry(.32,16,16),
+  new THREE.MeshStandardMaterial({color:0xffd2ae})
+ );
+ head.position.y=1.65;
+ player.add(head);
+ const ring=new THREE.Mesh(
+  new THREE.TorusGeometry(.5,.06,8,24),
+  new THREE.MeshStandardMaterial({color:0xe9c46a,emissive:0x8a4b13})
+ );
+ ring.rotation.x=Math.PI/2;
+ ring.position.y=.08;
+ player.add(ring);
+}
+
+function changeClass(t){
+ type=t;
+ const b=base[t];
+ hp=b.hp;mp=b.mp;atk=b.atk+weapon*5;def=b.def;
+ makePlayer();
+ updateUI();
+ say('職業已變更：'+b.name);
+}
+makePlayer();
+
+function spawnEnemy(x,z){
+ const g=new THREE.Group();
+ const mesh=new THREE.Mesh(
+  new THREE.DodecahedronGeometry(.65),
+  new THREE.MeshStandardMaterial({color:0xc34b5c,roughness:.7})
+ );
+ mesh.position.y=.7;
+ mesh.castShadow=true;
+ g.add(mesh);
+ const eye=new THREE.Mesh(
+  new THREE.SphereGeometry(.12),
+  new THREE.MeshBasicMaterial({color:0xffff00})
+ );
+ eye.position.set(0,1.1,.48);
+ g.add(eye);
+ g.position.set(x,0,z);
+ scene.add(g);
+ enemies.push({group:g,hp:55,max:55,alive:true});
+}
+
+for(let i=0;i<6;i++)spawnEnemy((Math.random()-.5)*13,-5-Math.random()*15);
+
+function updateUI(){
+ document.getElementById('stats').textContent=
+ base[type].name+' Lv.'+level+'　攻擊力 '+atk+'　防禦 '+def;
+ document.getElementById('hp').style.width=100*hp/base[type].hp+'%';
+ document.getElementById('mp').style.width=100*mp/base[type].mp+'%';
+ document.getElementById('hptext').textContent=Math.ceil(hp)+'/'+base[type].hp;
+ document.getElementById('mptext').textContent=Math.ceil(mp)+'/'+base[type].mp;
+ document.getElementById('xp').style.width=(exp%100)+'%';
+ document.getElementById('enemycount').textContent='怪物：'+enemies.filter(e=>e.alive).length;
+ document.getElementById('weapon').textContent='武器：星辰武器 +' +weapon;
+}
+
+function say(t){document.getElementById('message').textContent=t;}
+
+function nearest(){
+ let target=null,d=Infinity;
+ enemies.forEach(e=>{
+  if(!e.alive)return;
+  const n=e.group.position.distanceTo(player.position);
+  if(n<d){d=n;target=e;}
+ });
+ return target;
+}
+
+function hit(e,damage){
+ if(!e||!e.alive)return;
+ e.hp-=damage;
+ e.group.children[0].material.color.setHex(0xffffff);
+ setTimeout(()=>{if(e.alive)e.group.children[0].material.color.setHex(0xc34b5c)},100);
+ if(e.hp<=0){
+  e.alive=false;
+  scene.remove(e.group);
+  exp+=30;
+  if(exp>=100){
+   exp-=100;level++;atk+=5;
+   hp=Math.min(base[type].hp,hp+20);
+   say('升級成功！目前 Lv.'+level);
+  }else say('擊敗怪物！獲得 30 EXP');
+  if(enemies.filter(a=>a.alive).length<3)
+   spawnEnemy((Math.random()-.5)*14,-8-Math.random()*12);
+ }
+ updateUI();
+}
+
+function attack(){
+ const now=performance.now();
+ if(now-lastAttack<450)return;
+ lastAttack=now;
+ const e=nearest();
+ if(e&&e.group.position.distanceTo(player.position)<3.3){
+  hit(e,atk);
+  say('普通攻擊！造成 '+atk+' 點傷害');
+ }else say('靠近怪物才能攻擊');
+}
+
+function skill(){
+ const now=performance.now();
+ if(now-lastSkill<1800)return;
+ if(mp<20){say('魔力不足！');return;}
+ lastSkill=now;mp-=20;
+ let count=0;
+ enemies.forEach(e=>{
+  if(e.alive&&e.group.position.distanceTo(player.position)<5){
+   hit(e,atk*2);count++;
+  }
+ });
+ say(count?'星門技能！範圍命中 '+count+' 隻怪物':'技能已施放，附近沒有怪物');
+ updateUI();
+}
+
+function dodge(){
+ player.position.x+=Math.sin(player.rotation.y)*1.7;
+ player.position.z+=Math.cos(player.rotation.y)*1.7;
+ say('閃避成功！');
+}
+
+document.getElementById('attack').onclick=attack;
+document.getElementById('skill').onclick=skill;
+document.getElementById('dodge').onclick=dodge;
+document.getElementById('class').onchange=e=>changeClass(e.target.value);
+document.getElementById('equip').onclick=()=>{
+ weapon++;
+ atk+=5;
+ say('武器強化成功！攻擊力增加 5');
+ updateUI();
+};
+
+window.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+// 手機虛擬搖桿
+const joy=document.getElementById('joy');
+const knob=document.getElementById('knob');
+let joyId=null;
+function joystick(e){
+ const r=joy.getBoundingClientRect();
+ let x=e.clientX-r.left-r.width/2;
+ let y=e.clientY-r.top-r.height/2;
+ const len=Math.hypot(x,y);
+ if(len>35){x=x/len*35;y=y/len*35;}
+ knob.style.left=(33+x)+'px';
+ knob.style.top=(33+y)+'px';
+ move.x=x/35;
+ move.z=y/35;
+}
+joy.addEventListener('pointerdown',e=>{
+ joyId=e.pointerId;joy.setPointerCapture(joyId);joystick(e);
+});
+joy.addEventListener('pointermove',e=>{
+ if(e.pointerId===joyId)joystick(e);
+});
+function stopJoy(){
+ joyId=null;move={x:0,z:0};
+ knob.style.left='33px';knob.style.top='33px';
+}
+joy.addEventListener('pointerup',stopJoy);
+joy.addEventListener('pointercancel',stopJoy);
+
+let previous=performance.now();
+
+function animate(now){
+ requestAnimationFrame(animate);
+ const dt=Math.min((now-previous)/1000,.05);
+ previous=now;
+
+ let x=move.x,z=move.z;
+ if(keys.w||keys.arrowup)z-=1;
+ if(keys.s||keys.arrowdown)z+=1;
+ if(keys.a||keys.arrowleft)x-=1;
+ if(keys.d||keys.arrowright)x+=1;
+
+ const len=Math.hypot(x,z);
+ if(len>0){
+  x/=len;z/=len;
+  player.position.x+=x*5*dt;
+  player.position.z+=z*5*dt;
+  player.rotation.y=Math.atan2(x,z);
+ }
+
+ player.position.x=THREE.MathUtils.clamp(player.position.x,-20,20);
+ player.position.z=THREE.MathUtils.clamp(player.position.z,-25,15);
+
+ enemies.forEach(e=>{
+  if(!e.alive)return;
+  const dx=player.position.x-e.group.position.x;
+  const dz=player.position.z-e.group.position.z;
+  const d=Math.hypot(dx,dz);
+  if(d>1.5){
+   e.group.position.x+=dx/d*1.2*dt;
+   e.group.position.z+=dz/d*1.2*dt;
+  }
+  if(d<1.5&&Math.random()<.012){
+   hp=Math.max(0,hp-Math.max(1,8-def));
+   updateUI();
+   if(hp<=0)say('角色倒下了！請重新整理遊戲');
+  }
+ });
+
+ camera.position.set(
+  player.position.x,
+  player.position.y+6,
+  player.position.z+9
+ );
+ camera.lookAt(player.position.x,1,player.position.z-2);
+
+ portal.rotation.z+=dt*.3;
+ portal.material.emissiveIntensity=1.5+Math.sin(now*.003)*.5;
+
+ renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);
+
+setInterval(()=>{
+ mp=Math.min(base[type].mp,mp+3);
+ updateUI();
+},1000);
+
+window.addEventListener('resize',()=>{
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+
+updateUI();
+</script>
+</body>
+</html>
